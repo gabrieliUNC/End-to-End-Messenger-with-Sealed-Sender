@@ -2,12 +2,15 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from helper_funcs import pkFromBytes, pkToBytes
 import os
+from constants import CIPHER_NONCE
 
 INFO = 'MessengerProtocol'
 F = b'FF' * 32
 HKDF_SALT = b'0' * 64
+FIRST_MSG = b'First message'
 
 
 class State:
@@ -49,6 +52,31 @@ class KeyExchangeClient:
 
     def publishKeys(self):
         return self.name, self.Ipk, self.preKeyPK, self.preKeySig, self.OPKs
+    
+
+    def receiveKeys(self, Ipk, preKeyPK, preKeySig, opk = None):
+        try:
+            self.VERIFY(Ipk, pkToBytes(preKeyPK), preKeySig)
+        except Exception:
+            raise ValueError("Verification failed!")
+        
+        EKsk, EKpk = self.generateKeys()
+
+        DH1, DH2, DH3 = self.DH(self.Isk, preKeyPK), self.DH(self.EKsk, Ipk), self.DH(self.EKsk, preKeyPK) 
+
+        if opk:
+            DH4 = self.DH(self.EKsk, opk)
+            SK = self.KDF(DH1 + DH2 + DH3 + DH4)
+        else:
+            SK = self.KDF(DH1 + DH2 + DH3)
+
+
+        AD = pkToBytes(self.Ipk) + pkToBytes(Ipk)
+
+        aesgcm = AESGCM(SK)
+        ct = aesgcm.encrypt(CIPHER_NONCE, FIRST_MSG, AD)
+
+        return self.Ipk, EKpk, opk, ct
 
 
     def generateKeys(self):
@@ -108,4 +136,4 @@ server.receivePreKeys(name, Ipk, preKeyPK, preKeySig, OPKs)
 Ipk, preKeyPK, preKeySig, opk = server.sendPreKeys(name)
 
 alice = KeyExchangeClient('alice')
-alice.VERIFY(Ipk, pkToBytes(preKeyPK), preKeySig)
+Ipk, EKpk, opk, ct = alice.receiveKeys(Ipk, preKeyPK, preKeySig, opk)

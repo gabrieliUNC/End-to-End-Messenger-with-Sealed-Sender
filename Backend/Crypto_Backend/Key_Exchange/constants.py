@@ -1,0 +1,6 @@
+DH_NONCE = b'handshake nonce'
+RK_NONCE = b'rootkey nonce'
+CK_NONCE_1 = b'0x01'
+CK_NONCE_2 = b'0x02'
+CIPHER_NONCE = b'cipher nonce'
+AES_NONCE = b'SealedSenderAES2'
