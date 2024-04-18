@@ -1,5 +1,6 @@
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import x25519
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 
 def pkToBytes(public_key):
@@ -11,4 +12,4 @@ def pkToBytes(public_key):
 
 
 def pkFromBytes(public_bytes):
-    return x25519.X25519PublicKey.from_public_bytes(public_bytes)
+    return ed25519.ed25519PublicKey.from_public_bytes(public_bytes)
