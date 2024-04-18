@@ -10,6 +10,5 @@ def pkToBytes(public_key):
     )
     return public_bytes
 
-
 def pkFromBytes(public_bytes):
     return ed25519.ed25519PublicKey.from_public_bytes(public_bytes)
