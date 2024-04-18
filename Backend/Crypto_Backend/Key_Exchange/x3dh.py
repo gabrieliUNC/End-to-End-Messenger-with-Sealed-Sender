@@ -9,13 +9,32 @@ INFO = 'MessengerProtocol'
 F = b'FF' * 32
 HKDF_SALT = b'0' * 64
 
+
+class State:
+    def __init__(self, Ipk, preKeyPK, preKeySig, OPKs):
+        self.Ipk = Ipk
+        self.preKeyPK = preKeyPK
+        self.preKeySig = preKeySig
+        self.OPKs = OPKs
+
 class KeyExchangeServer:
     def __init__(self):
         self.conns = {}
 
+    def receivePreKeys(self, name, Ipk, preKeyPK, preKeySig, OPKs):
+        self.conns[name] = State(Ipk, preKeyPK, preKeySig, OPKs)
+
+    
+    def sendPreKeys(self, name):
+        i = (int.from_bytes(os.urandom(2), byteorder='little')) % len(self.conns[name].OPKs)
+        return self.conns[name].Ipk, self.conns[name].preKeyPK, self.conns[name].preKeySig, self.conns[name].OPKs[i]
+        
+
+
     
 class KeyExchangeClient:
-    def __init__(self):
+    def __init__(self, name):
+        self.name = name
         self.Isk, self.Ipk = self.generateKeys()
 
         self.preKeySK, self.preKeyPK = self.generateKeys()
@@ -29,7 +48,7 @@ class KeyExchangeClient:
 
 
     def publishKeys(self):
-        return self.Ipk, self.preKeyPK, self.preKeySig, self.OPKs
+        return self.name, self.Ipk, self.preKeyPK, self.preKeySig, self.OPKs
 
 
     def generateKeys(self):
@@ -76,5 +95,17 @@ class KeyExchangeClient:
         
 
 
-bob = KeyExchangeClient()
-print(bob.publishKeys())
+bob = KeyExchangeClient('bob')
+
+
+name, Ipk, preKeyPK, preKeySig, OPKs = bob.publishKeys()
+
+
+
+server = KeyExchangeServer()
+server.receivePreKeys(name, Ipk, preKeyPK, preKeySig, OPKs)
+
+Ipk, preKeyPK, preKeySig, opk = server.sendPreKeys(name)
+
+alice = KeyExchangeClient('alice')
+alice.VERIFY(Ipk, pkToBytes(preKeyPK), preKeySig)
