@@ -1,15 +1,16 @@
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+import xeddsa
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from helper_funcs import pkFromBytes, pkToBytes
+from helper_funcs import pkFromBytes, pkToBytes, skToBytes
 import os
 from constants import CIPHER_NONCE
 
-INFO = 'MessengerProtocol'
+INFO = b'MessengerProtocol'
 F = b'FF' * 32
-HKDF_SALT = b'0' * 64
+HKDF_SALT = b'0' * 32
 FIRST_MSG = b'First message'
 
 
@@ -30,7 +31,7 @@ class KeyExchangeServer:
     
     def sendPreKeys(self, name):
         i = (int.from_bytes(os.urandom(2), byteorder='little')) % len(self.conns[name].OPKs)
-        return self.conns[name].Ipk, self.conns[name].preKeyPK, self.conns[name].preKeySig, self.conns[name].OPKs[i]
+        return self.conns[name].Ipk, self.conns[name].preKeyPK, self.conns[name].preKeySig, self.conns[name].OPKs[i], i
         
 
 
@@ -38,6 +39,7 @@ class KeyExchangeServer:
 class KeyExchangeClient:
     def __init__(self, name):
         self.name = name
+        self.i = -1
         self.Isk, self.Ipk = self.generateKeys()
 
         self.preKeySK, self.preKeyPK = self.generateKeys()
@@ -51,32 +53,74 @@ class KeyExchangeClient:
 
 
     def publishKeys(self):
-        return self.name, self.Ipk, self.preKeyPK, self.preKeySig, self.OPKs
+        return self.name, self.Ipk, self.preKeyPK, self.preKeySig, [ _[1] for _ in self.OPKs]
     
 
-    def receiveKeys(self, Ipk, preKeyPK, preKeySig, opk = None):
+    def sendMessage(self, Ipk, preKeyPK, preKeySig, opk = None):
         try:
             self.VERIFY(Ipk, pkToBytes(preKeyPK), preKeySig)
         except Exception:
             raise ValueError("Verification failed!")
         
+        AD = pkToBytes(self.Ipk) + pkToBytes(Ipk)
+        # print(AD)
+        # print(self.Ipk)
+        # print(Ipk)
+        
         EKsk, EKpk = self.generateKeys()
+        
+        preKeyPK = xeddsa.bindings.ed25519_pub_to_curve25519_pub(pkToBytes(preKeyPK))
+        Ipk = xeddsa.bindings.ed25519_pub_to_curve25519_pub(pkToBytes(Ipk))
+        
+        DH1 = xeddsa.bindings.x25519(skToBytes(self.Isk), preKeyPK)
+        print(DH1)
+        DH2 = xeddsa.bindings.x25519(skToBytes(EKsk), Ipk)
+        DH3 = xeddsa.bindings.x25519(skToBytes(EKsk), preKeyPK)
 
-        DH1, DH2, DH3 = self.DH(self.Isk, preKeyPK), self.DH(self.EKsk, Ipk), self.DH(self.EKsk, preKeyPK) 
 
         if opk:
-            DH4 = self.DH(self.EKsk, opk)
-            SK = self.KDF(DH1 + DH2 + DH3 + DH4)
+            opk = xeddsa.bindings.ed25519_pub_to_curve25519_pub(pkToBytes(opk))
+            DH4 = xeddsa.bindings.x25519(skToBytes(EKsk), opk)
+            self.SK = self.KDF(DH1 + DH2 + DH3 + DH4)
         else:
-            SK = self.KDF(DH1 + DH2 + DH3)
+            self.SK = self.KDF(DH1 + DH2 + DH3)
+        
+        # print(self.SK)
 
-
-        AD = pkToBytes(self.Ipk) + pkToBytes(Ipk)
-
-        aesgcm = AESGCM(SK)
+        aesgcm = AESGCM(self.SK)
         ct = aesgcm.encrypt(CIPHER_NONCE, FIRST_MSG, AD)
 
-        return self.Ipk, EKpk, opk, ct
+        return self.Ipk, EKpk, self.i, ct
+    
+    
+    def receiveMessage(self, Ipk, EKpk, i, ct):
+        # print(self.Ipk)
+        # print(Ipk)
+        AD = pkToBytes(Ipk) + pkToBytes(self.Ipk)
+        # print(AD)
+        
+        Ipk = xeddsa.bindings.ed25519_pub_to_curve25519_pub(pkToBytes(Ipk))
+        EKpk = xeddsa.bindings.ed25519_pub_to_curve25519_pub(pkToBytes(EKpk))
+        
+        DH1 = xeddsa.bindings.x25519(skToBytes(self.preKeySK), Ipk)
+        print(DH1)
+        DH2 = xeddsa.bindings.x25519(skToBytes(self.Isk), EKpk)
+        DH3 = xeddsa.bindings.x25519(skToBytes(self.preKeySK), EKpk)
+        
+        if i != -1:
+            opk = self.OPKs[i]
+            DH4 = xeddsa.bindings.x25519(skToBytes(opk[0]), EKpk)
+            self.SK = self.KDF(DH1 + DH2 + DH3 + DH4)
+        else:
+            self.SK = self.KDF(DH1 + DH2 + DH3)
+        
+        # print(self.SK)
+        
+        aesgcm = AESGCM(self.SK)
+        
+        # pt = aesgcm.decrypt(CIPHER_NONCE, ct, AD)
+        
+        return
 
 
     def generateKeys(self):
@@ -114,7 +158,7 @@ class KeyExchangeClient:
     def KDF(self, IKM):
         derived_key = HKDF(
             algorithm=hashes.SHA512(),
-            length=64,
+            length=32,
             salt=HKDF_SALT,
             info=INFO,
         ).derive(F + IKM)
@@ -133,7 +177,10 @@ name, Ipk, preKeyPK, preKeySig, OPKs = bob.publishKeys()
 server = KeyExchangeServer()
 server.receivePreKeys(name, Ipk, preKeyPK, preKeySig, OPKs)
 
-Ipk, preKeyPK, preKeySig, opk = server.sendPreKeys(name)
+Ipk, preKeyPK, preKeySig, opk, i = server.sendPreKeys(name)
 
 alice = KeyExchangeClient('alice')
-Ipk, EKpk, opk, ct = alice.receiveKeys(Ipk, preKeyPK, preKeySig, opk)
+Ipk, EKpk, i, ct = alice.sendMessage(Ipk, preKeyPK, preKeySig, opk)
+alice.i = i
+
+bob.receiveMessage(Ipk, EKpk, i, ct)

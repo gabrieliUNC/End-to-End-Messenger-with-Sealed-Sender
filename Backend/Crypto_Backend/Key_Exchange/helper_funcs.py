@@ -12,3 +12,11 @@ def pkToBytes(public_key):
 
 def pkFromBytes(public_bytes):
     return ed25519.ed25519PublicKey.from_public_bytes(public_bytes)
+
+def skToBytes(sk):
+    private_bytes = sk.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+    return private_bytes
