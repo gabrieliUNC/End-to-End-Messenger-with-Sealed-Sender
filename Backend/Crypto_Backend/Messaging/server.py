@@ -63,4 +63,8 @@ header, sender_ephemeral_pub, envelope_ct, envelope_mac, sealed_ct, sealed_mac =
 
 server.sendSealedMessage('2', header, sender_ephemeral_pub, envelope_ct, envelope_mac, sealed_ct, sealed_mac)
 
-print(bob.messages)
+try:
+    print(bob.messages)
+except Exception:
+    print(f'Cannot print private property!')
+print(f'Unless called with public function: {bob.publicMessages()}')

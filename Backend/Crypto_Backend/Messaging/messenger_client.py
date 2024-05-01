@@ -9,27 +9,30 @@ from state import state
 
 class MessengerClient:
     def __init__(self, name, server_signing_pk, server_encryption_pk):
-        self.name = name
-        self.server_signing_pk = server_signing_pk
-        self.server_encryption_pk = server_encryption_pk
-        self.conns = {}
+        self.__name = name
+        self.__server_signing_pk = server_signing_pk
+        self.__server_encryption_pk = server_encryption_pk
+        self.__conns = {}
         self.certs = {}
-        self.messages = {}
+        self.__messages = {}
 
         sk, pk = self.__GENERATE_DH()
-        self.sk = sk
-        self.pk = pk
-        self.sealedSender = SealedSender(self.sk, self.pk, self.server_signing_pk)
+        self.__sk = sk
+        self.__pk = pk
+        self.__sealedSender = SealedSender(self.__sk, self.__pk, self.__server_signing_pk)
 
 
     def generateCertificate(self):
         """Generate a certificate for a user."""
 
         certificate = {
-            "name": self.name,
-            "pk": self.pk
+            "name": self.__name,
+            "pk": self.__pk
         }
         return certificate
+    
+    def publicMessages(self):
+        return self.__messages
 
 
     def receiveCertificate(self, certificate, signature):
@@ -37,13 +40,13 @@ class MessengerClient:
 
         name, publicKey = certificate["name"], certificate["pk"]
         try:
-            self.__verifySignature(certificate,signature,self.server_signing_pk)
+            self.__verifySignature(certificate,signature,self.__server_signing_pk)
         except:
             raise ValueError("Invalid signature.")
         
-        if name == self.name:
-            self.sealedSender.cert = certificate
-            self.sealedSender.sig = signature
+        if name == self.__name:
+            self.__sealedSender.cert = certificate
+            self.__sealedSender.sig = signature
         else:
             self.certs[name] = certificate
 
@@ -53,8 +56,8 @@ class MessengerClient:
 
         recipient_pub = self.certs[name]['pk']
         header, message_ct = self.__sendMessage(name, message)
-        sender_ephemeral_pub, e_chainKey, envelope_ct, envelope_mac = self.sealedSender.makeEnvelope(recipient_pub)
-        sealed_ct, sealed_mac = self.sealedSender.sealMessage(message_ct, recipient_pub, e_chainKey, envelope_ct, envelope_mac)
+        sender_ephemeral_pub, e_chainKey, envelope_ct, envelope_mac = self.__sealedSender.makeEnvelope(recipient_pub)
+        sealed_ct, sealed_mac = self.__sealedSender.sealMessage(message_ct, recipient_pub, e_chainKey, envelope_ct, envelope_mac)
 
         return header, sender_ephemeral_pub, envelope_ct, envelope_mac, sealed_ct, sealed_mac
     
@@ -63,18 +66,18 @@ class MessengerClient:
         """Given an envelope and sealed message, retrieve the senders public identity and unseal the message."""
 
         try:
-            sender_pub, d_chainKey = self.sealedSender.unSealEnvelope(sender_ephemeral_pub, envelope_ct, envelope_mac)
-            name, message_ct = self.sealedSender.decryptSealedMessage(sender_pub, d_chainKey, envelope_ct, envelope_mac, sealed_ct, sealed_mac)
+            sender_pub, d_chainKey = self.__sealedSender.unSealEnvelope(sender_ephemeral_pub, envelope_ct, envelope_mac)
+            name, message_ct = self.__sealedSender.decryptSealedMessage(sender_pub, d_chainKey, envelope_ct, envelope_mac, sealed_ct, sealed_mac)
 
             pt = self.__receiveMessage(name, header, message_ct)
         except Exception:
             return None
         
-        if name in self.messages:
-            self.messages[name].append(pt)
+        if name in self.__messages:
+            self.__messages[name].append(pt)
         else:
-            self.messages[name] = []
-            self.messages[name].append(pt)
+            self.__messages[name] = []
+            self.__messages[name].append(pt)
 
         return pt
     
@@ -88,17 +91,17 @@ class MessengerClient:
 
         publicKey = self.certs[name]["pk"]
 
-        if name not in self.conns:
-            SK = self.__DH((self.sk, self.pk), publicKey)
+        if name not in self.__conns:
+            SK = self.__DH((self.__sk, self.__pk), publicKey)
             self.__startSending(name, SK)
 
-            ct = self.__RatchetENCRYPT(message, self.conns[name].DHs, name)
+            ct = self.__RatchetENCRYPT(message, self.__conns[name].DHs, name)
 
-            return self.pk, ct
+            return self.__pk, ct
         
-        pk = self.conns[name].DHs[1]
+        pk = self.__conns[name].DHs[1]
 
-        ct = self.__RatchetENCRYPT(message, self.conns[name].DHs, name)
+        ct = self.__RatchetENCRYPT(message, self.__conns[name].DHs, name)
 
         # print(len(pkToBytes(pk) + ct))
         
@@ -108,8 +111,8 @@ class MessengerClient:
     def __receiveMessage(self, name, header, ciphertext):
         """End-2-End encrypted messaging receiver."""
 
-        if name not in self.conns:
-            SK = self.__DH((self.sk,self.pk), header)
+        if name not in self.__conns:
+            SK = self.__DH((self.__sk,self.__pk), header)
             self.__startReceiving(name, SK)
         try:
             pt = self.__RatchetDecrypt(ciphertext, header, name)
@@ -123,7 +126,7 @@ class MessengerClient:
         """Given a sender and message, encrypt the message to be reported."""
 
         sk, u = self.__GENERATE_DH()
-        v = sk.exchange(ec.ECDH(), self.server_encryption_pk)
+        v = sk.exchange(ec.ECDH(), self.__server_encryption_pk)
         digest = hashes.Hash(hashes.SHA256())
         digest.update(pkToBytes(u) + v)
         k = digest.finalize()
@@ -204,15 +207,15 @@ class MessengerClient:
         """Perform the Double Ratchet step for End-2-End Encryption and encrypt message."""
 
         header = header[1]
-        self.conns[name].CKs, mk = self.__KDF_CK(self.conns[name].CKs)
+        self.__conns[name].CKs, mk = self.__KDF_CK(self.__conns[name].CKs)
         return self.__ENCRYPT(msg, header, mk)
     
     def __RatchetDecrypt(self, ct, header, name):
         """Perform the Double Ratchet step for End-2-End Encryption and decrypt message."""
 
-        if header != self.conns[name].DHr:
+        if header != self.__conns[name].DHr:
             self.__DHRatchet(name, header)
-        self.conns[name].CKr, mk = self.__KDF_CK(self.conns[name].CKr)
+        self.__conns[name].CKr, mk = self.__KDF_CK(self.__conns[name].CKr)
         return DECRYPT(mk, ct, header)
 
     def msgToBytes(self, msg):
@@ -221,26 +224,26 @@ class MessengerClient:
     def __DHRatchet(self, name, header):
         """Perform the Diffie-Helman ratchet step."""
 
-        self.conns[name].DHr = header
-        self.conns[name].rk, self.conns[name].CKr = self.__KDF_RK(self.conns[name].rk, self.__DH(self.conns[name].DHs, self.conns[name].DHr))
-        self.conns[name].DHs = self.__GENERATE_DH()
-        self.conns[name].rk, self.conns[name].CKs = self.__KDF_RK(self.conns[name].rk, self.__DH(self.conns[name].DHs, self.conns[name].DHr))
+        self.__conns[name].DHr = header
+        self.__conns[name].rk, self.__conns[name].CKr = self.__KDF_RK(self.__conns[name].rk, self.__DH(self.__conns[name].DHs, self.__conns[name].DHr))
+        self.__conns[name].DHs = self.__GENERATE_DH()
+        self.__conns[name].rk, self.__conns[name].CKs = self.__KDF_RK(self.__conns[name].rk, self.__DH(self.__conns[name].DHs, self.__conns[name].DHr))
 
     def __startSending(self, name, SK):
         """Establish a connection on first message sent."""
 
-        self.conns[name] = state()
-        self.conns[name].DHs = self.sk, self.pk
-        self.conns[name].DHr = self.certs[name]["pk"]
-        self.conns[name].rk, self.conns[name].CKs = self.__KDF_RK(SK, SK)
-        self.conns[name].CKr = None
+        self.__conns[name] = state()
+        self.__conns[name].DHs = self.__sk, self.__pk
+        self.__conns[name].DHr = self.certs[name]["pk"]
+        self.__conns[name].rk, self.__conns[name].CKs = self.__KDF_RK(SK, SK)
+        self.__conns[name].CKr = None
 
     def __startReceiving(self, name, SK):
         """Establish a connection on first message received."""
 
-        self.conns[name] = state()
-        self.conns[name].DHs = self.sk, self.pk
-        self.conns[name].DHr = None
-        self.conns[name].rk = SK
-        self.conns[name].CKs = None
-        self.conns[name].CKr = None
+        self.__conns[name] = state()
+        self.__conns[name].DHs = self.__sk, self.__pk
+        self.__conns[name].DHr = None
+        self.__conns[name].rk = SK
+        self.__conns[name].CKs = None
+        self.__conns[name].CKr = None
